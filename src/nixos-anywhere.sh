@@ -9,6 +9,7 @@ kexecExtraFlags=""
 enableDebug=""
 diskoScript=""
 diskoMode="disko"
+postInstallScript=""
 nixosSystem=""
 extraFiles=""
 vmTest="n"
@@ -22,6 +23,7 @@ declare -A phases
 phases[kexec]=1
 phases[disko]=1
 phases[install]=1
+phases[post]=1
 phases[reboot]=1
 
 hardwareConfigBackend=none
@@ -122,7 +124,10 @@ Options:
   kexec: kexec into the nixos installer
   disko: first unmount and destroy all filesystems on the disks we want to format, then run the create and mount mode
   install: install the system
+  post: run scripts provided by --post-install-script after installation (in local system)
   reboot: unmount the filesystems, export any ZFS pools and reboot the machine
+* --post-install-script <script>
+  run a post installation (bash) script, it will be sourced (within subshell forked), therefore you can use functions in nixos-anywhere.sh
 * --disko-mode disko|mount|format
   set the disko mode to format, mount or destroy. Default is disko.
   disko: first unmount and destroy all filesystems on the disks we want to format, then run the create and mount mode
@@ -242,6 +247,7 @@ parseArgs() {
       phases[kexec]=0
       phases[disko]=0
       phases[install]=0
+      phases[post]=0
       phases[reboot]=0
       IFS=, read -r -a phaseList <<<"$2"
       for phase in "${phaseList[@]}"; do
@@ -250,6 +256,13 @@ parseArgs() {
         fi
         phases[$phase]=1
       done
+      shift
+      ;;
+    --post-install-script)
+      postInstallScript="$(realpath "$2")"
+      if [[ "$postInstallScript" == "" ]]; then
+        abort "Post script seems not found"
+      fi
       shift
       ;;
     --stop-after-disko)
@@ -615,6 +628,17 @@ if [ ${copyHostKeys-n} = "y" ]; then
   done
 fi
 nixos-install --no-root-passwd --no-channel-copy --system "$nixosSystem"
+SSH
+
+  if [[ ${phases[post]} == 1 ]] && [[ "$post" != "" ]]; then
+    # within a subshell:
+    ( source "$post" )
+  fi
+
+  runSsh sh <<SSH
+set -eu ${enableDebug}
+export PATH="\$PATH:/run/current-system/sw/bin"
+
 if [[ ${phases[reboot]} == 1 ]]; then
   if command -v zpool >/dev/null && [ "\$(zpool list)" != "no pools available" ]; then
     # we always want to export the zfs pools so people can boot from it without force import
